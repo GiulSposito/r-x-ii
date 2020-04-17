@@ -1,0 +1,272 @@
+---
+title: "Learning Tidymodels"
+output: html_notebook
+---
+
+Esse notebook R tem como finalidade conhecer e exercitar o conjunto de pacotes `tidymodel`, que seria uma evolução do pacote `caret` para transformação e fitting de dados.
+
+Reproduz ou se baseia nos seguintes tutoriais da internet:
+
+* [Caret vs. tidymodels - comparing the old and new](https://konradsemsch.netlify.app/2019/08/caret-vs-tidymodels-comparing-the-old-and-new/)
+* [IMPLEMENTING THE SUPER LEARNER WITH TIDYMODELS](https://www.alexpghayes.com/blog/implementing-the-super-learner-with-tidymodels/)
+
+# Seguindo o exemplo
+
+## Bibliotecas
+
+```{r loadlib, message=FALSE, warning=FALSE}
+set.seed(42)
+options(max.print = 150)
+
+library(modeldata)
+library(tidymodels)
+library(tidyverse)
+library(caret)
+library(magrittr)
+library(naniar)
+library(furrr)
+library(skimr)
+library(vip)
+library(workflows)
+library(tune)
+
+plan(multicore)  
+```
+
+## Data preparation
+
+```{r}
+
+data("credit_data")
+
+credit_data <- credit_data %>% set_names(tolower(names(.)))
+
+glimpse(credit_data)
+
+```
+
+## Checking missing data com `naniar` e avalinado 
+
+```{r}
+
+credit_data %>% 
+  miss_var_summary()
+
+```
+
+## avaliando os dados
+
+```{r}
+
+credit_data %>% skim()
+
+```
+
+
+## Class Balance
+
+```{r}
+table(credit_data$status)
+round(prop.table(table(credit_data$status)),2)
+```
+
+## modeling
+
+```{r}
+
+split <- rsample::initial_split(credit_data, prop = .8, strata = "status")
+
+df_train <- training(split)
+df_test  <- testing(split)
+
+train_cv <- rsample::vfold_cv(df_train, v=5, strata = "status")
+train_cv_caret <- rsample2caret(train_cv)
+
+```
+
+
+In this particular example I mainly focus on imputting missing data or assigning them a new categorical level, infrequent/ unobserved values and hot-encoding them.
+
+
+```{r}
+
+my_recipe <- df_train %>% 
+  recipe(status~.) %>% 
+  # imputation: add "unknown" to all missing factor values
+  step_unknown(all_nominal(), -status) %>% 
+  # imputation: add median to all missing numeric values
+  step_medianimpute(all_numeric()) %>% 
+  # compining: group factors below 5% of frequency (default) in an "infrequent_combined"
+  step_other(all_nominal(), -status, other = "infrequent_combined") %>% 
+  # create a "level" in the factor columns for unseen factors
+  step_novel(all_nominal(), -status, new_level = "unrecorded_observation") %>% 
+  # OHE
+  step_dummy(all_nominal(), -status, one_hot=T)
+
+my_recipe
+my_recipe_prep <- prep(my_recipe, retain=T)  
+
+my_recipe_prep
+tidy(my_recipe_prep)
+
+```
+
+## playing with recipe
+
+```{r}
+# some data
+mydata <- tibble(
+  class = as.factor(c("dog","dog","dog","cat","cat","monkey")),
+  size  = c(53,42,83,20,30,70),
+  weight = c(15,8,12,5,6,21)
+)
+
+# create a recipe from "mydata"
+rcp <- recipe(mydata) %>% 
+  # one hot encoding fo class
+  step_dummy(all_nominal(), one_hot = T)
+
+# prepare the recipe
+p_rcp <- prep(rcp, verbose = T)
+
+# apply a prepared recipe to a new data
+# in this case do OHE
+bake(p_rcp, mydata)
+
+```
+
+## Caret
+
+```{r}
+
+control_caret <- trainControl(
+  method="cv", 
+  verboseIter = F,
+  classProbs = T, 
+  summaryFunction = twoClassSummary,
+  returnResamp = "final",
+  savePredictions = "final",
+  index = train_cv_caret$index,
+  indexOut = train_cv_caret$indexOut
+)
+
+grid_caret <- expand.grid(
+  mtry = seq(1,ncol(df_train)-1,3),
+  splitrule = c("extratrees","gini"),
+  min.node.size=c(1,3,5)
+)
+
+
+model_caret <- train(
+    status~.,
+    data=juice(my_recipe_prep), 
+    method="ranger", 
+    metric="ROC",
+    trControl=control_caret, 
+    tuneGrid = grid_caret,
+    importance="impurity",
+    num.tree=500
+  )
+
+print(model_caret)
+```
+
+```{r}
+
+varImp(model_caret, scale=T)$importance %>% 
+  rownames_to_column() %>% 
+  arrange(desc(Overall))
+  
+```
+
+```{r}
+
+df_train_pred_caret <- model_caret$pred %>% 
+  group_by(rowIndex) %>% 
+  summarise(bad=mean(bad)) %>% 
+  transmute(estimate=bad) %>% 
+  add_column(truth=df_train$status)
+
+# cross-validated training performance
+percent(roc_auc(df_train_pred_caret, truth, estimate)$.estimate)
+
+```
+```{r}
+# test performance
+
+df_test_pred_caret <- predict(
+    model_caret, 
+    newdata = bake(my_recipe_prep, df_test),
+    type="prob"
+  ) %>% 
+  as_tibble() %>% 
+  transmute(estimate=bad) %>% 
+  add_column(truth=df_test$status)
+
+percent(roc_auc(df_test_pred_caret, truth, estimate)$.estimate)
+
+```
+
+# tidymodel
+
+```{r}
+engine_tidym <- rand_forest(
+    mode = "classification",
+    mtry = tune(),
+    trees = tune(),
+    min_n = tune()
+  ) %>% 
+  set_engine("ranger",importance="impurity")
+
+print(engine_tidym)
+```
+
+```{r}
+gridtm <- grid_random(
+  mtry() %>% range_set(c(1, 20)),
+  trees() %>% range_set(c(500, 1000)), 
+  min_n() %>% range_set(c(2, 10)),
+  size = 30
+  )
+```
+
+```{r}
+
+wkfl_tidym <- workflow() %>% 
+  add_recipe(my_recipe) %>% 
+  add_model(engine_tidym)
+
+gridy_tidym <- tune_grid(wkfl_tidym, resamples=train_cv, grid=gridtm,
+                         metric=metric_set(roc_auc),
+                         control=control_grid(save_pred=T))
+
+```
+
+```{r}
+collect_metrics(gridy_tidym)
+```
+
+```{r}
+
+grid_tidym_best <- select_best(gridy_tidym, metric="roc_auc")
+(wkfl_tidym_best <- finalize_workflow(wkfl_tidym, grid_tidym_best))
+```
+
+```{r}
+(wkfl_tidym_final <- last_fit(wkfl_tidym_best, split = split))
+```
+
+```{r}
+# Cross-validated training performance
+percent(show_best(gridy_tidym, metric="roc_auc", n = 1)$mean)
+```
+
+```{r}
+# Test performance
+percent(wkfl_tidym_final$.metrics[[1]]$.estimate[[2]])
+```
+
+```{r}
+vip(pull_workflow_fit(wkfl_tidym_final$.workflow[[1]]))$data
+```
+
