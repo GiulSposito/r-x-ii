@@ -1,0 +1,164 @@
+---
+title: "Tutorial on Tidymodel"
+output: md_document
+---
+
+Reproduzindo este [artigo](https://hansjoerg.me/2020/02/09/tidymodels-for-machine-learning/) sobre `tidymodels` do [Hansjörg Plieninger](https://hansjoerg.me/page/about/)
+
+# Tutorial on tidymodels for Machine Learning
+
+## Setup
+
+```{r loadlibs, message=FALSE, warning=FALSE}
+library(conflicted)
+library(tidymodels)
+library(tidyverse)
+library(ggrepel)
+library(corrplot)
+library(skimr)
+
+conflict_prefer("filter","dplyr")
+
+ggplot2::theme_set(theme_light())
+```
+
+## Dataset: `Diamonds`
+
+```{r diamond_plot}
+
+data("diamonds")
+
+head(diamonds,10)
+
+diamonds %>% 
+  sample_n(2000) %>% 
+  mutate_if(is.factor, as.numeric) %>% 
+  select(price, everything()) %>% 
+  cor() %>% 
+  {.[order(abs(.[,1]), decreasing = T),
+     order(abs(.[,1]), decreasing = T)]} %>% 
+  corrplot(method = "number", type="upper", mar=c(0,0,1.5,0), 
+           title="Correlations between price and various features of diamonds")
+  
+
+```
+
+```{r}
+
+diamonds %>% 
+  skim()
+
+```
+
+
+## Separating Testing and Training Data: `rsample`
+
+```{r}
+# you know: the life, the universer... 
+set.seed(42)
+
+# training/test
+dia_split <- initial_split(diamonds, prop = .1, strata = price)
+dia_train <- training(dia_split)
+dia_test  <- testing(dia_split)
+
+dim(dia_train)
+dim(dia_test)
+
+# cv-folds
+dia_vfold <- vfold_cv(dia_train, v=3, repeats=1, strata=price)
+
+
+dia_vfold %>% 
+  mutate(df_ana=map(splits, analysis),
+         df_ass=map(splits, assessment)) -> folds
+
+
+```
+
+## Data Pre-Processing and Feature Engineering: `recipes`
+
+The plot below indicates that there may be a nonlinear relationship between price and carat, and I want to address that using higher-order terms.
+
+```{r}
+qplot(carat, price, data = dia_train) +
+    scale_y_continuous(trans = log_trans(), labels = function(x) round(x, -2)) +
+    geom_smooth(method = "lm", formula = "y ~ poly(x, 4)") +
+    labs(title = "Nonlinear relationship between price and carat of diamonds",
+         subtitle = "The degree of the polynomial is a potential tuning parameter")
+```
+
+```{r}
+dia_rec <- recipe(price~., data=dia_train) %>% 
+  # log no preço
+  step_log(all_outcomes()) %>% 
+  # normializa valores (que fatoriais)
+  step_normalize(all_predictors(), -all_nominal()) %>% 
+  # OHE dos fatoriais
+  step_dummy(all_nominal()) %>% 
+  # cria uma feature (?) de polinomial
+  step_poly(carat, degree = 4)
+
+prep(dia_rec)
+
+```
+
+```{r}
+
+# apply the recipe in the train data
+dia_prep <- prep(dia_rec)
+
+# extract transformed training data
+dia_juiced <- juice(dia_prep)
+
+# apply the recipe in a new data
+bake(dia_prep, dia_test)
+
+```
+
+## Defining and Fitting Models: `parsnip`
+
+The parsnip package has wrappers around many1 popular machine learning algorithms, and you can fit them using a unified interface. This is extremely helpful, since you have to remember only one rather then dozens of interfaces.
+
+```{r}
+
+# regression example
+lm_model <- linear_reg() %>% 
+  set_mode("regression") %>% 
+  set_engine("lm")
+
+rf_model <- rand_forest(mtry=3, trees=500, min_n=5) %>% 
+  set_mode("regression") %>% 
+  set_engine("ranger", importance="impurity")
+
+```
+
+```{r}
+
+lm_fit <- fit(lm_model, price~., dia_juiced)
+lm_fit
+
+rf_fit <- fit(rf_model, price~., dia_juiced)
+rf_fit
+```
+
+## Summarizing Fitted Models: broom
+
+
+```{r}
+
+glance(lm_fit$fit)
+tidy(lm_fit$fit)
+rf_fit$fit
+
+augment(lm_fit$fit) %>% 
+  rowid_to_column() %>% 
+  select(rowid, price, .fitted:.std.resid)
+
+
+
+
+
+
+```
+
