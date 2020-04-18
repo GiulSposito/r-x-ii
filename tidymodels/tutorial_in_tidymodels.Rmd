@@ -138,8 +138,8 @@ rf_model <- rand_forest(mtry=3, trees=500, min_n=5) %>%
 lm_fit <- fit(lm_model, price~., dia_juiced)
 lm_fit
 
-rf_fit <- fit(rf_model, price~., dia_juiced)
-rf_fit
+# rf_fit <- fit(rf_model, price~., dia_juiced)
+# rf_fit
 ```
 
 ## Summarizing Fitted Models: broom
@@ -149,16 +149,20 @@ rf_fit
 
 glance(lm_fit$fit)
 tidy(lm_fit$fit)
-rf_fit$fit
+# rf_fit$fit
 
-augment(lm_fit$fit) %>% 
+lm_train_predicted <- augment(lm_fit$fit) %>% 
   rowid_to_column() %>% 
   select(rowid, price, .fitted:.std.resid)
+```
 
+```{r}
 
-
-
-
+ggplot(lm_train_predicted, aes(.fitted, price)) +
+  geom_point(alpha=.2)+
+  ggrepel::geom_label_repel(aes(label=rowid), data=filter(lm_train_predicted, abs(.resid)>2)) +
+  labs(title="Actual vs. Predicted Price of Diamonds")
 
 ```
 
+## Evaluating Model Performance: `yardstick`
