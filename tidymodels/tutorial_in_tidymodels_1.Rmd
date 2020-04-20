@@ -1,5 +1,5 @@
 ---
-title: "Tutorial on Tidymodel"
+title: "Tutorial on Tidymodel part I"
 output: md_document
 ---
 
@@ -166,3 +166,47 @@ ggplot(lm_train_predicted, aes(.fitted, price)) +
 ```
 
 ## Evaluating Model Performance: `yardstick`
+
+We already saw performance measures RMSE and R squared in the output of glance() above. The yardstick package is specifically designed for such measures for both numeric and categorical outcomes, and it plays well with grouped predictions (e.g., from cross-validation).
+
+Let’s use rsample, parsnip, and yardstick for cross-validation to get a more accurate estimation of RMSE.
+
+```{r}
+
+# 3 CV fold, we can extract the "train" data and the "test/validation" data of each fold
+lm_fit2 <- dia_vfold %>% 
+  mutate(df_ana = map(splits, analysis),
+         df_ass = map(splits, assessment)) 
+
+
+lm_fit2_result <- lm_fit2 %>% 
+  mutate(
+    recipe = map(df_ana, ~prep(dia_rec, training = .x)), #prepara a receita para um dos CVs
+    df_ana = map(recipe, juice), # extrai os dados transformados na receita
+    df_ass = map2(recipe, df_ass, ~bake(.x, new_data=.y)) #aplica a receita aos dados de assessment
+  ) %>% 
+  mutate(
+    # fita um lm_model ao conjunto de dados de analise transformado
+    model_fit = map(df_ana, ~fit(lm_model, price~., data=.x)) 
+  ) %>% 
+  mutate(
+    # aplica o modelo ao dado de assessment
+    model_pred = map2(model_fit, df_ass, ~predict(.x, new_data=.y))
+  )
+
+select(lm_fit2_result, id, recipe:model_pred)
+
+```
+
+Now, we can extract the actual prices price from the assessment data and compare them to the predicted prices .pred. Then, the yardstick package comes into play: The function metrics() calculates three different metrics for numeric outcomes. Furthermore, it automatically recognizes that lm_preds is grouped by folds and thus calculates the metrics for each fold.
+
+```{r}
+lm_preds <- lm_fit2_result %>% 
+  mutate( res=map2(df_ass, model_pred, ~data.frame(price=.x$price, .pred=.y$.pred))) %>% 
+  select(id, res) %>% 
+  unnest(res) %>% 
+  group_by(id)
+
+yardstick::metrics(lm_preds, truth=price, estimate=.pred)
+```
+
