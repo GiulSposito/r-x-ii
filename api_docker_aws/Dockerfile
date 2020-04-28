@@ -7,7 +7,7 @@ RUN apt-get update -qq && apt-get install -y \
     
 RUN R -e "install.packages('plumber')"
 
-COPY plumber.R ./
+COPY plumber.R modelo.R runAPI.R ./
 
 EXPOSE 8080
 
