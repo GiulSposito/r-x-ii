@@ -24,7 +24,7 @@ influ <- influ_scrap %>%
   select( year, everything() )
 
 ## Mortes COVD-19 notificadas via MS: https://covid.saude.gov.br/
-covid_csv <- read_delim("https://mobileapps.saude.gov.br/esus-vepi/files/unAFkcaNDeXajurGB7LChj8SgQYS2ptm/e9250e5db0e3bf01c21c407cddaa9103_Download_COVID19_20200418.csv",
+covid_csv <- read_delim("https://mobileapps.saude.gov.br/esus-vepi/files/unAFkcaNDeXajurGB7LChj8SgQYS2ptm/7f5ff801706b28fbdb4be818043c37a4_Download_COVID19_20200428.csv",
                     delim = ";")
 
 # dados vem por dia e estado

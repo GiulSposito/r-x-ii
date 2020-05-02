@@ -2,7 +2,7 @@ library(tidyverse)
 library(glue)
 
 # Scrapping dos dados da Fiocruz (InfoGripe), anos de interesse
-range <- c(2009,2016,2018,2019,2020)
+range <- c(2009:2020)
 url <- "http://info.gripe.fiocruz.br/data/detailed/1/2/{year}/52/Brasil/weekly-incidence-curve"
 
 # para cada ano, faz a requisição das notificações em formato CSV e importa
@@ -13,10 +13,10 @@ scrap <- range %>%
   map(read_csv, na = "null")
 
 # unificando os dataframes 
-cases <- scrap %>% 
+cases <- scrap %>%
   bind_rows() %>% 
   # cria uma coluna de ano para cada csv
-  mutate( year = rep(range, each=54) ) %>% 
+  mutate( year = rep(range, each=57) ) %>% 
   select( year, everything() )
 
 # para comparar, precisamos colocar os registros iniciando de uma mesma
@@ -50,7 +50,7 @@ cases %>%
   ggplot(aes(adjweek, acc_value, group=year, color=year)) +
   geom_line(size=1) +
   labs(title="Notificações de síndrome respiratória aguda grave (SRAG)",
-       subtitle="Epidemias H1N1 em 2009 (sem vacina) e 2016 (com vacinação) \nc/ nCovid-19 em 2020 e anos de referência 2018 e 2019",
+       subtitle="Epidemias H1N1 em 2009 (sem vacina) e 2016 (com vacinação) \nc/ nCovid-19 em 2020 e anos de referência",
        caption = glue("fonte: www.saude.gov.br/sinan via Fiocruz em {date}", date=Sys.Date())) +
   theme_minimal() +
   theme( plot.caption = element_text(hjust = 0) )
