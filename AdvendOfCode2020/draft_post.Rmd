@@ -320,6 +320,33 @@ In the above example, these slopes would find 2, 7, 3, 4, and 2 tree(s) respecti
 What do you get if you multiply together the number of trees encountered on each of the listed slopes?
 
 ```{r}
+# count trees in a trajectory
+# receives a int matrix where "1" is a tree and "0" not
+# receives a "shift pattern" for each step down
+countTreesByShift <- function(shift.pattern, area.map){
+  
+  # starting from top left
+  base_pos <- c(1,1)
+  trajectory <- base_pos
+
+  # apply the pattern until the bottom
+  for(i in 1:(nrow(area.map)-1)){
+    step <- base_pos + shift.pattern
+    base_pos <- step
+    trajectory <- rbind(trajectory, step)
+  }
+  
+  # the columns repeat adjusting the bound
+  y_coords <- trajectory[,2] %% ncol(area.map)
+  y_coords[y_coords==0] <- ncol(area.map)
+  trajectory[,2] <- y_coords
+  # avoid out of index in the number of rows
+  trajectory <- trajectory[trajectory[,1]<=nrow(area.map),]
+  
+  # subset the map with trajectory coordinates and sum
+  return(sum(int_map[trajectory]))
+}
+
 # read the files as vector of string
 input <- read.csv("./day03_input.txt", header = F)[,1]
 
@@ -331,39 +358,18 @@ char_map <- strsplit(input, "") %>%
 # convert in to 0 and 1 (1 for the trees) 
 int_map <- 1*(char_map == "#")
 
-# lets subset the matrix with the trajectory
+# test the patterns
 
-# the hill trajectory: 3 to the left and 1 to the bottom
-shifts <- c(
-  0,1,
-  0,2,
-  0,3,
-  1,3
-) %>% matrix(nrow=4, byrow=T)
+# part 1
+countTreesByShift(c(1,3),int_map)
 
-# starting from top left
-base_pos <- c(1,1)
-trajectory <- base_pos
-
-# until the last row
-for(i in 1:(nrow(int_map)-1)){
-  steps <- rep(base_pos,4) %>% 
-    matrix(nrow = 4, byrow = T) +
-    shifts
-  
-  base_pos <- steps[4,]
-  
-  trajectory <- rbind(trajectory, base_pos)
-}
-
-# the columns repeat adjusting
-y_coords <- trajectory[,2] %% ncol(int_map)
-y_coords[y_coords==0] <- ncol(int_map)
-
-trajectory[,2] <- y_coords
-
-sum(int_map[trajectory])
+# part 2
+c(1,1,1,3,1,5,1,7,2,1) %>% 
+  matrix(ncol=2, byrow = T) %>%
+  split(1:nrow(.)) %>% 
+  purrr::map_dbl(countTreesByShift, area.map=int_map) %>% 
+  prod()
 
 ```
-
+ 
 
