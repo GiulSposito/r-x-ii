@@ -130,3 +130,64 @@ dark violet bags contain no other bags.
 In this example, a single shiny gold bag must contain 126 other bags.
 
 How many individual bags are required inside your single shiny gold bag?
+
+```{r}
+
+# reads the input as a vector of strings
+input <- readLines("./day07_input.txt")
+
+# transforms the strings in a data frame with the rules
+bag.rules <- tibble(input) %>% 
+  # separates the bag from the content rule
+  separate(input, into=c("bag","contains"), sep=" contain ") %>% 
+  # for each back split the rule in different types of bag
+  # we build a 'tidy' dataset, each line maps from a bag to a content
+  group_by(bag) %>% 
+  nest() %>% 
+  ungroup() %>% 
+  mutate( contains =  map(data,~unlist(str_split(.x,", "))) ) %>% 
+  unnest(contains) %>% 
+  select(-data) %>% 
+  # now we splt the bag type and color 
+  separate(bag, into = c("bag.type","bag.color"), sep = " ", extra = "drop") %>%
+  # also for the content rule
+  separate(contains, into = c("ctn.bag.qtd","ctn.bag.type","ctn.bag.color"), sep=" ", extra = "drop") %>% 
+  # some adjust to bags with no content
+  mutate( ctn.bag.qtd = if_else(ctn.bag.qtd=="no","0",ctn.bag.qtd) ) %>% 
+  mutate( ctn.bag.qtd = as.integer(ctn.bag.qtd), 
+          ctn.bag.type = if_else( ctn.bag.qtd==0, as.character(NA), ctn.bag.type),
+          ctn.bag.color = if_else( ctn.bag.qtd==0, as.character(NA), ctn.bag.color) )
+
+# transforms the bag rules into a graph from bag to contains
+bag.graph <- bag.rules %>% 
+  transmute( from = paste0(bag.type,"_",bag.color),
+             to = paste0(ctn.bag.type,"_",ctn.bag.color),
+             weight = ctn.bag.qtd ) %>% 
+  filter(weight!=0) %>% 
+  # keep the capacity (as weight) and directed
+  as_tbl_graph(bag.graph, directed = T)
+
+# finds all paths starting 
+paths <- bag.graph %>% 
+  all_simple_paths(from = "shiny_gold")
+
+# for each path gets the weight between the nodes
+paths %>% 
+  map_dbl(function(.p, .bg){
+    # run through the path
+    weights <- vector(mode="double", (length(.p)-1))
+    for (i in 1:(length(.p)-1)){
+      # gets the weights along the pagh
+      weights[i] <- .bg %>% 
+        filter( from == .p[i], 
+                to   == .p[i+1]) %>% 
+        pull(weight)
+    }
+    # return the product of the weights
+    return(prod(weights))
+  }, .bg=activate(bag.graph, edges)) %>% 
+  # sum them up
+  sum()
+
+```
+
