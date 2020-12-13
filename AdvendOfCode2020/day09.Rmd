@@ -62,24 +62,32 @@ In this example, after the 5-number preamble, almost every number is the sum of 
 The first step of attacking the weakness in the XMAS data is to find the first number in the list (after the preamble) which is not the sum of two of the 25 numbers before it. What is the first number that does not have this property?
 
 ```{r}
-
 library(purrr)
 library(magrittr)
 
+# reads the input data as an array of numbers
 input <- as.double(readLines("./day09_input.txt"))
 
+# function that checks if a number is the sum
+# of all combinations of two from the preamble
 checkData <- function(.preamble, .number) {
   return(.number %in% colSums(combn(.preamble,2)))
 }
   
+# preamble size
 pre.size <- 25
 
-numChecked <- (pre.size+1):length(input) %>% 
+# checks, along the data it there is a sum in the preamble
+# numCheck return an array of result check for all data
+numChecked <- (pre.size+1):length(input) %>% # the range of the data (input-preamble)
   map_lgl(function(.i, .d, .ps){
+    # calc the preamble and the number to be checked
     checkData(.d[(.i-.ps):(.i-1)], .d[.i]) %>% 
       return()
   }, .d=input, .ps=pre.size)
- 
+
+# once checked all number, get the first index that fail and
+# returns that input value at this position
 input[min(pre.size + which(numChecked==FALSE))]
 ```
 
@@ -119,38 +127,57 @@ To find the encryption weakness, add together the smallest and largest number in
 What is the encryption weakness in your XMAS-encrypted list of numbers?
 
 ```{r}
-
-library(purrr)
 library(magrittr)
 
+# reads the input data as an array of numbers
 input <- as.double(readLines("./day09_input.txt"))
 
+# function that checks if a number is the sum
+# of all combinations of two from the preamble
 checkData <- function(.preamble, .number) {
   return(.number %in% colSums(combn(.preamble,2)))
 }
   
+# preamble size
 pre.size <- 25
 
-numChecked <- (pre.size+1):length(input) %>% 
+# checks, along the data it there is a sum in the preamble
+# numCheck return an array of result check for all data
+numChecked <- (pre.size+1):length(input) %>% # the range of the data (input-preamble)
   map_lgl(function(.i, .d, .ps){
+    # calc the preamble and the number to be checked
     checkData(.d[(.i-.ps):(.i-1)], .d[.i]) %>% 
       return()
   }, .d=input, .ps=pre.size)
- 
+
+# once checked all number, get the first index that fail and
+# returns that input value at this position
+# store the answer in the 'step1' var to be used in sequence
 step1 <- input[min(pre.size + which(numChecked==FALSE))]
 
+# Now we must find a continuous range of falues which the sum is equal
+# the value found in step 1
+
+# Calc all possible "continuous" range index
 rangeComb <- combn(1:length(input),2)
 
+# for each, check if the sum of its values match the target value
+# we test all then and store the test result
 rngChecked <- rangeComb %>% 
   apply(2,function(.range, .data, .numCheck){
     return(sum(.data[.range[1]:.range[2]])==.numCheck)
   }, .data=input, .numCheck=step1)
 
+# get the index range which the range matched the sum
 answerRange <- rangeComb[,which(rngChecked==T)]
+
+# get the values in this range
 contRange <- input[answerRange[1]:answerRange[2]]
 
+# sum the smallest and the largest value in this range
 resp <- min(contRange) + max(contRange)
 
+# this is our answer
 resp
 
 ```
