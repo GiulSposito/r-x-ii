@@ -3,6 +3,46 @@ title: "R Notebook"
 output: html_notebook
 ---
 
+## Graph Generic Test
+
+```{r}
+library(tidygraph)
+library(tidyverse)
+library(ggraph)
+
+g <- tibble(
+  from = LETTERS[sample(1:8,12, replace = T)],
+  to   = LETTERS[sample(1:8,12, replace = T)],
+  dist = sample(1:8,12, replace = T)
+) %>% 
+  as_tbl_graph()
+
+plotGraph <- function(g){
+  g %>% 
+    ggraph(layout = "kk") +
+      geom_edge_fan(alpha=0.3) +
+      geom_node_point(color="blue",alpha=0.8, size=8) +
+      geom_node_text(aes(label=name), color="white") +
+      theme_graph()
+}
+
+plotGraph(g)
+
+g %N>%
+  filter(name %in% c("G","H","C")) %>% 
+  plotGraph()
+
+
+g %>% 
+  to_subgraph(name %in% c("G","H","C")) %>%
+  .[[1]] %>% 
+  class()
+
+
+```
+
+
+
 ## Day 7: Handy Haversacks
 
 You land at the regional airport in time for your next flight. In fact, it looks like you'll even have time to grab some food: all flights are currently delayed due to issues in luggage processing.
@@ -30,10 +70,12 @@ You have a shiny gold bag. If you wanted to carry it in at least one other bag, 
 
 In the above rules, the following options would be available to you:
 
+```
 A bright white bag, which can hold your shiny gold bag directly.
 A muted yellow bag, which can hold your shiny gold bag directly, plus some other bags.
 A dark orange bag, which can hold bright white and muted yellow bags, either of which could then hold your shiny gold bag.
 A light red bag, which can hold bright white and muted yellow bags, either of which could then hold your shiny gold bag.
+```
 
 So, in this example, the number of bag colors that can eventually contain at least one shiny gold bag is 4.
 
@@ -45,10 +87,11 @@ To begin, get your puzzle input
 library(tidyverse)
 
 # reads the input as a vector of strings
-input <- readLines("./day07_input.txt")
+input <- readLines("./day07_test_01.txt")
 
-# transforms the strings in a data frame with the rules
-bag.rules <- tibble(input) %>% 
+# function to decode the string bag rules in a tibble
+decodeBagRules <- function(.input){
+  tibble(input=.input) %>% 
   # separates the bag from the content rule
   separate(input, into=c("bag","contains"), sep=" contain ") %>% 
   # for each back split the rule in different types of bag
@@ -68,6 +111,10 @@ bag.rules <- tibble(input) %>%
   mutate( ctn.bag.qtd = as.integer(ctn.bag.qtd), 
           ctn.bag.type = if_else( ctn.bag.qtd==0, as.character(NA), ctn.bag.type),
           ctn.bag.color = if_else( ctn.bag.qtd==0, as.character(NA), ctn.bag.color) )
+}
+
+# transforms the strings in a data frame with the rules
+bag.rules <- decodeBagRules(input)
 
 # let's see what we have
 bag.rules
@@ -87,6 +134,8 @@ bag.graph <- bag.rules %>%
 # what we have?
 bag.graph
 
+plotGraph(bag.graph)
+
 # we query the graph asking for all paths from the "shiny_old" node
 bag.graph %>% 
   all_simple_paths(from="shiny_gold") %>% 
@@ -95,6 +144,23 @@ bag.graph %>%
   unique() %>% 
   # counts it
   length()
+
+
+bag.subgraphs <- bag.graph %>% 
+  all_simple_paths(from="shiny_gold") %>% 
+  map(function(.p,.g){
+    to_subgraph(.g, name %in% names(.p)) %>% 
+      .[[1]] %E>% 
+      as_tibble() %>% 
+      pull(weight) %>% 
+      sum()
+  },.g=bag.graph)
+
+bag.subgraphs %>% 
+  map(function(.sg){
+    class(.sg)
+  })
+
 
 
 ```
