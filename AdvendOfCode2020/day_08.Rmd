@@ -59,6 +59,7 @@ library(tidyverse)
 
 input <- readLines("./day08_test_01.txt")
 
+# Parses the array of string into a dataframe with columns "cmd" and "arg"
 decodeProgram <- function(.input) {
   tibble(input=.input) %>% 
     separate(input, into = c("cmd","arg"), sep=" ", convert = T) %>% 
@@ -148,10 +149,10 @@ Fix the program so that it terminates normally by changing exactly one `jmp` (to
 
 executeProgram <- function(.program, acc=0, ptr=1, canChange=F){
 
-  # run the program until before a command be executed a second time
-  while( ptr > 0 &&
-         ptr <= nrow(.program) &&
-         .program[ptr, ]$exec!=1 ) {
+  # run the program until..
+  while( ptr > 0 &&                # ptr jumps outside the bordering -> its a error
+         ptr <= nrow(.program) &&  # ptr jumps outside the bordering -> its a error or finishes
+         .program[ptr, ]$exec!=1 ) { # ptr points to a command already executed -> its a loop
   
       # get the command and arg
     cmd <- .program[ptr,]$cmd
@@ -176,7 +177,7 @@ executeProgram <- function(.program, acc=0, ptr=1, canChange=F){
   
   # verify the exit state
   result <- case_when(
-    ptr < 1                      ~ "error",
+    ptr < 1                     ~ "error",
     ptr <= nrow(.program)       ~ "loop",
     ptr == (nrow(.program) + 1) ~ "end",
     T ~"error"
@@ -187,27 +188,42 @@ executeProgram <- function(.program, acc=0, ptr=1, canChange=F){
     
 }
 
+# read the input as an array of string
 input <- readLines("./day08_input.txt")
+
+# parses the input data
 program <- decodeProgram(input)
+
+# execut3 the program as is
 result <- executeProgram(program)
+
+# locate the possible changes in the program
 changeIndex <- which(program$cmd %in% c("jmp","nop"))
 i <- 1
 
-while( result$exit!="end" && i <= length(changeIndex) ){
+# for each one, change the command and test
+while( result$exit!="end" &&        # until we found a change that works
+       i <= length(changeIndex) ){  # until the end of possibilities
   
+  # get an step to be changed
   step <- program[changeIndex[i],]
-  chg.program <- program
   
+  # modify the program
+  chg.program <- program 
   chg.program[changeIndex[i],1] <-  case_when(
-    step$cmd=="jmp" ~ "nop",
-    step$cmd=="nop" && step$arg!=0 ~ "jmp",
-    T ~ chg.program[changeIndex[i],]$cmd
+    step$cmd=="jmp" ~ "nop",                # change 'jmp' to 'nop'
+    step$cmd=="nop" && step$arg!=0 ~ "jmp", # change 'nop' to 'jmp' (when args is not zero: loop)
+    T ~ chg.program[changeIndex[i],]$cmd    # not change anything
   )
   
+  # execute the changed program
   result <- executeProgram(chg.program)
+  
+  # next change...
   i <- i +1
 }
 
+# check the result
 result
 
 ```
