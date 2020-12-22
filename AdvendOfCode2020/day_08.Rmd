@@ -54,6 +54,13 @@ Immediately before the program would run an instruction a second time, the value
 
 Run your copy of the boot code. Immediately before any instruction is executed a second time, what value is in the accumulator?
 
+#### Solution
+
+This is fun remembers me my old assembly classes in the college.
+
+We'll create a function to decode the input text in to a data frame of commands and arguments and a execution counter, to check if that command was already executed and so detect a loop. And we'll _run_ the data frame processing each command (row) until the end it or to find a loop. We update the execution counter for each row executed.
+
+
 ```{r warning=FALSE, message=FALSE}
 library(tidyverse)
 
@@ -143,10 +150,18 @@ After the last instruction (`acc +6`), the program terminates by attempting to r
 
 Fix the program so that it terminates normally by changing exactly one `jmp` (to `nop`) or `nop` (to `jmp`). What is the value of the accumulator after the program terminates?
 
+#### Solution
+
+We'll use the same idea to part one, but here let's put the code that _runs_ a program (the code data frame) in a more sophisticated function. This function will returns if a program ended if with a error (jump to a invalid position), with a loop (executed the same instruction twice) or with success (run the last command).
+
+To find which command we need to change, we just find with positions of instructions `nop` or `jmp` in the original code, and for each one, change it, run the changed program and check the outcome, until we find a programa that works.
 
 ```{r}
 
-
+# Emulates the execution of a code returning:  
+# ERROR if the execution jumps to a invalid position
+# LOOP, if executes the same instruction twice
+# END if run the last command nicelly
 executeProgram <- function(.program, acc=0, ptr=1, canChange=F){
 
   # run the program until..
@@ -227,4 +242,4 @@ while( result$exit!="end" &&        # until we found a change that works
 result
 
 ```
-
+That is our response.

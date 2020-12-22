@@ -61,6 +61,10 @@ In this example, after the 5-number preamble, almost every number is the sum of 
 
 The first step of attacking the weakness in the XMAS data is to find the first number in the list (after the preamble) which is not the sum of two of the 25 numbers before it. What is the first number that does not have this property?
 
+#### Solution
+
+The solutions is pretty straighforward, we use the preamble as a _slide window_ along the transmission data and do a combination of two from the preamble and sum it, so we check if the next number is one of the possible value from it.
+
 ```{r}
 library(purrr)
 library(magrittr)
@@ -126,6 +130,10 @@ To find the encryption weakness, add together the smallest and largest number in
 
 What is the encryption weakness in your XMAS-encrypted list of numbers?
 
+#### Solution
+
+We'll apply the same idea from part 1, to find which value is invalid. After that we create a array of continuous values from one to size of transmission, combine then, sum and find which ones are equal to the invalid value found.
+
 ```{r}
 library(magrittr)
 
@@ -155,10 +163,10 @@ numChecked <- (pre.size+1):length(input) %>% # the range of the data (input-prea
 # store the answer in the 'step1' var to be used in sequence
 step1 <- input[min(pre.size + which(numChecked==FALSE))]
 
-# Now we must find a continuous range of falues which the sum is equal
+# Now we must find a continuous range of values which the sum is equal
 # the value found in step 1
 
-# Calc all possible "continuous" range index
+# Calculates all possible "continuous" range index
 rangeComb <- combn(1:length(input),2)
 
 # for each, check if the sum of its values match the target value
@@ -182,7 +190,7 @@ resp
 
 ```
 
-
+There is it!
 
 
 
