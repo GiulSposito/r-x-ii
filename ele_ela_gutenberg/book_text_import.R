@@ -7,8 +7,13 @@ bks <- books %>%
   select(book_id, author, title, subject, language) %>% 
   unnest(c(author, title, subject, language)) %>% 
   distinct() %>% 
+<<<<<<< HEAD
   # filter( str_detect(str_to_lower(subject), "fiction"),
   #         language == "Portuguese" ) %>% 
+=======
+  filter( str_detect(str_to_lower(subject), "fiction"),
+          language == "Portuguese" ) %>% 
+>>>>>>> db22cc8a4f9d81d15df3328a0bfa9eb1f61b23e3
   inner_join(book_files, by="book_id")
 
 book_lines <- bks %>% 
@@ -48,4 +53,8 @@ book_lines <- bks %>%
   })
 
 book_lines %>% 
+<<<<<<< HEAD
   saveRDS("./ele_ela_gutenberg/book_text.rds")
+=======
+  saveRDS("./ele_ela_gutenberg/fiction_book_text.rds")
+>>>>>>> db22cc8a4f9d81d15df3328a0bfa9eb1f61b23e3
