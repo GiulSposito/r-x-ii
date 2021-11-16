@@ -1,0 +1,41 @@
+---
+title: "Markowitz Exploration"
+output: html_notebook
+---
+
+Ativos
+
+```{r}
+
+# install.packages("quantmod")
+library(quantmod)
+library(tidyverse)
+
+ativos <- tibble(
+  tipo = c(rep("varejo",3),
+           rep("quimico",3), 
+           rep("energia",4)),
+  ticker = c("MGLU3.SA","VVAR3.SA","LAME4.SA",
+             "UNIP6.SA","BRKM5.SA","DTEX3.SA",
+             "ENBR3.SA","EGIE3.SA","CPLE6.SA","ENGI11.SA")
+) %>% 
+  mutate(tipo=as.factor(tipo))
+
+cotacao <- getSymbols(ativos$ticker,
+                      src="yahoo",
+                      from="2018-09-30",
+                      to="2020-09-30",
+                      periodicity="daily",
+                      auto.assign = T,
+                      warnings = F) %>% 
+  map(~Ad(get(.))) %>% 
+  reduce(merge)
+
+colnames(cotacao) <- str_remove_all(names(cotacao),".Adjusted")
+
+cotacao <- cotacao %>% 
+  na.omit() %>% 
+  abs()
+
+```
+

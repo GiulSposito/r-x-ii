@@ -1,0 +1,544 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Reprodução do post [#TidyTuesday - Building Stalk Portfolios with R](https://www.robert-hickman.eu/post/how_i_made_my_millions/)
+
+In Animal Crossing, one aspect in particular that captured my attention was the weekly [market for turnips](https://animalcrossing.fandom.com/wiki/White_turnip) on each player’s island. Every Sunday, the player has the opportunity to buy turnips from a salesperson, which they then have a week to sell (before the turnips rot). The prices of turnips fluctuate over the week and (as far as I know) the vegetables have little function outside of buying/selling, so in essence they work as stocks which can be bought once per week, and the player must clear before the next offering.
+
+* players can buy as many turnips as they want from character a for price x per turnip* on Sunday morning
+* players can then sell as many or as few turnips as they want to character b for price y(t) from the morning until 10pm
+* prices vary depending on price y(t-1) and a given pattern, changing at the start of each day and then at midday each day (so there are 12 independent selling prices y through a week)
+* on the next Sunday everything resets
+* for the next week the pattern the prices follow may or may not be different
+
+Modelling the movement of the turnip price leads to some interesting analysis using models from financial data science, and while this data wasn’t a part of #TidyTuesday, I think it’s related enough to potentially be of interest to people.
+
+```{r setup}
+#load libraries
+library(tidyverse) 
+library(MASS)
+library(conflicted)
+#prefer tidyverse functions
+preferred <- map(c("filter", "select", "lag"), conflict_prefer, "dplyr")
+
+
+#source the functions governing turnips price dynamics
+source("./turnip_funs.R")
+```
+
+After purchasing turnips the prices can either:
+
+* fluctuate (go up and down around mean $100 purchase price)
+* ‘spike’ upwards around midweek (where prices will decrease before shooting up past the ~$100 purchase price around Wednesday). This is actually two separate but similar patterns, where ‘large spike’ leads to greater selling prices than ‘small spike’
+* decreasing in which the player has no hope of making a profit that week as prices will decrease every day before resetting on the Sunday
+
+The patterns are not completely memory-less, and progress as a Markov Chain, where the probability of prices following a pattern next week are dependent on the current price pattern. 
+
+```{r}
+
+#the four patterns
+states <- c("fluctuating", "large_spike", "decreasing", "small_spike")
+
+#build the transition matrix between the states
+transition_matrix <- matrix(
+  c(
+    0.2, 0.3, 0.15, 0.35,
+    0.5, 0.05, 0.2, 0.25,
+    0.25, 0.45, 0.05, 0.25,
+    0.45, 0.25, 0.15, 0.15
+  ),
+  nrow = 4, byrow = TRUE)
+
+#name the current (rows) and next (cols) states
+rownames(transition_matrix) <- states
+colnames(transition_matrix) <- states
+
+transition_matrix
+```
+
+If we are a naive observer, the chance of observing any pattern is therefore solved by taking the left eigenvectors of this matrix:
+
+```{r}
+#take the elft eignevector
+#ginv from the MASS package
+left_eigen <- ginv(eigen(transition_matrix)$vectors)[1,]
+pattern_likelihood_analytic <- left_eigen / sum(left_eigen)
+#name the probabilities
+names(pattern_likelihood_analytic) <- states
+
+pattern_likelihood_analytic
+```
+
+Where we see that around half the time we have a chance of either a large or a small spike in prices around midweek (24.7% + 25.9%), with the majority of the remaining weeks showing a fluctuating pattern (where the player can still make a small profit). The worst case scenario of continually decreasing prices happens only 14.7% of the time, so overall, the stalk market looks like a pretty good bet for investors.
+
+Of course, we can also do this using Hamiltonian Monte Carlo methods by simulating a few sets of independent weeks
+
+```{r warning=FALSE, message=FALSE}
+#transition probabilities
+transition_df <- as.data.frame(transition_matrix) %>%
+  rownames_to_column(var = "current_state") %>%
+  pivot_longer(cols = all_of(states), names_to = "next_state", values_to = "prob") %>%
+  group_by(current_state) %>%
+  mutate(cum_prob = cumsum(prob)) %>%
+  ungroup()
+
+#get the next pattern from the current pattern
+find_next_pattern <- function(pattern, rng, transitions = transition_df) {
+  next_transition <- transitions %>%
+    #find possible patterns
+    filter(current_state == pattern & cum_prob > rng) %>%
+    #take top row
+    .[1,]
+  #next state is that pattern
+  next_state <- next_transition$next_state
+}
+
+#run forward for prop_forward weeks for each run to check convergence
+transition_patterns <- function(initial_pattern, prop_forward) {
+  patterns <- c()
+  pattern <- initial_pattern
+  #run n times
+  for(runs in seq(prop_forward)) {
+    pattern <- find_next_pattern(pattern, runif(1))
+    patterns <- append(patterns, pattern)
+  }
+  #return as df
+  df <- data.frame(
+    initial_pattern,
+    pattern = as.character(patterns),
+    t = 1:prop_forward
+  )
+  return(df)
+}
+
+#repeat sims n times
+simulation_reps <- 100
+#how many weeks to run each sim for
+prop_forward = 10
+#run the sims
+pattern_likelihood <- states %>%
+  rep(simulation_reps) %>%
+  map_df(., transition_patterns, prop_forward) %>%
+  group_by(pattern) %>%
+  summarise(prob = n() / (simulation_reps *  prop_forward * length(states)))
+
+pattern_likelihood
+
+
+```
+
+And we get pretty much the same numbers (as we would expect). To show the relative frequencies and how well our two methods of finding the stationary probabilities work, we can easily graph this using ggplot
+
+```{r}
+p1 <- pattern_likelihood_analytic %>%
+  as.data.frame() %>%
+  rownames_to_column("pattern") %>%
+  left_join(pattern_likelihood, by = "pattern") %>%
+  rename(hmc = "prob", analytic = ".") %>%
+  pivot_longer(c("hmc", "analytic"), names_to = "calc", values_to = "prob") %>%
+  ggplot(aes(x = pattern, y = prob, group = calc)) +
+  geom_bar(stat = "identity", position = "dodge", aes(fill = calc), colour = "black") +
+  scale_fill_manual(values = c("dodgerblue", "orange")) +
+  labs(
+    title = "probability of observing any one price pattern when randomly sampling",
+    subtitle = "showing difference estimate from analytic and Monte Carlo methods",
+    x = "week's prices pattern",
+    y = "probability"
+  ) +
+  theme_minimal()
+
+p1
+```
+
+So, given the likelihood of spikes in prices, we know we’ve got a good chance of making some money by buying and selling turnips.
+
+# Modelling Turnips Prices
+
+To calculate exactly how much we might expect, it’s easiest, just to simulate the prices a load of times
+
+The function randomly selects an initial (Sunday) price for turnips to be bought at, and then, runs the simulation code for a given pattern of prices. The second argument simply gives a list of names for the epochs (each day for both AM or PM, which will have different selling prices). I wrap the simulation up into a df because I find it easier to work with though the real meat of the simulation is a vector of length 14 which contains the ‘two’ Sunday buying prices (which will be identical- it’s just to make it easier for me to count), and the 12 selling prices from Monday AM - Saturday PM.
+
+```{r}
+#the epochs for buying and selling turnips
+#14 epochs, 2 identical buying epochs, and 12 unique selling epochs
+week <- c("sun", "mon", "tues", "wed", "thurs", "fri", "sat")
+epochs <- paste(rep(week, each = 2), rep(c("AM", "PM"), 7))
+
+#simulate a week of prices given a pattern
+simulate_week <- function(pattern, epochs) {
+  #set up prices vector
+  sunday_price <- sample(90:110, 1)
+  initial_prices <- c(rep(sunday_price, 2), rep(0, 12))
+  
+  #simulate pattern
+  if(pattern == "decreasing") {
+    week_prices <- sim_decreasing(
+      prices = initial_prices
+    )
+  } else if(pattern == "fluctuating") {
+    week_prices <- sim_fluctuating(
+      prices = initial_prices, 
+      first_epochs = c(sample(0:6, 1), sample(2:3, 1))
+    )
+  } else if(pattern == "large_spike") {
+    week_prices <- sim_largespike(
+      prices = initial_prices, 
+      rate = runif(1, 0.85, 0.95), 
+      first_peak = sample(2:8, 1)
+    )
+  } else if(pattern == "small_spike") {
+    week_prices <- sim_smallspike(
+      prices = initial_prices, 
+      first_peak = sample(1:8, 1)
+    )
+  }
+  
+  #arrange df
+  weekly_prices <- data.frame(
+    day = epochs,
+    buy_price = sunday_price,
+    price = week_prices
+  )
+  
+  return(weekly_prices)
+}
+```
+
+We can calculate how many times each pattern should be run by defining the number of simulations we want to run, and sampling price patterns, weighted by likelihood, from the df we calculated above.
+
+Then we just have to sample the vector of 1000 choices of the 4 patterns to the function and do a little munging at the end. After we can get a sense of which days are most profitable for selling turnips by plotting the histogram of the return (by how many times we have multiplied our original stock of $) on turnip investment.
+
+```{r warning=FALSE, message=FALSE}
+#how many simulations of weeks to run
+simulation_reps <- 1000
+prices <- pattern_likelihood %>%
+  #sample patterns by likelihood
+  sample_n(simulation_reps, weight = prob, replace = TRUE) %>%
+  .$pattern %>%
+  map_df(., simulate_week, epochs) %>%
+  mutate(return = price / buy_price,
+         day = factor(day, levels = epochs)) %>%
+  filter(!grepl("sun [A-Z]{2}", day)) %>%
+  group_by(day) %>%
+  mutate(mean_return = mean(return)) %>%
+  ungroup()
+
+p2 <- ggplot(prices, aes(x = return, fill = mean_return)) +
+  geom_histogram(alpha = 0.8, colour = "black") +
+  geom_vline(xintercept = 1, linetype = "dashed", colour = "dodgerblue", size = 1) +
+  scale_fill_gradient2(low = "red", high = "green", mid = "black", midpoint = 1) +
+  scale_x_continuous(limits = c(0, 2)) +
+  theme_minimal() +
+  labs(
+    title = "which days yield greatest profits in the stalk market?",
+    subtitle = paste("based on", simulation_reps, "simulations"),
+    x = "return on turnip investment",
+    y = "observed count"
+  ) +
+  facet_wrap(~day)
+
+p2
+```
+
+he histograms struggle to portray the movement of time across epochs, so I also wanted to plot the prices using the ggridges package to produce density joy plots over time. Here we can see a bit clearer that it’s only the long positive tails on the distributions which give us an expected return slightly above break even from Wednesday AM- Thursday PM:
+
+```{r warning=FALSE, message=FALSE}
+library(ggridges)
+
+p3 <- ggplot(prices, aes(x = return, y = day, fill = mean_return)) +
+  geom_density_ridges2() +
+  geom_vline(xintercept = 1, linetype = "dashed", colour = "dodgerblue", size = 1) +
+  scale_fill_gradient2(low = "red", high = "green", mid = "black", midpoint = 1) +
+  scale_x_continuous(limits = c(0, 2.5)) +
+  labs(
+    title = "which days yield greatest profits in the stalk market?",
+    subtitle = paste("based on", simulation_reps, "simulations"),
+    x = "return on turnip investment",
+    y = "observed density by day"
+  ) +
+  theme_minimal()
+
+p3
+```
+
+In addition to performing manual tasks or investing in turnip stocks, the player can also bank their hard-earned money and collect the interest. As far as I can tell banked money earns interest at a rate of 0.05%* which is payed out monthly.
+
+To work with this a bit easier, I’m going to make a slight tweak and calculate as if the interested was earned daily. Therefore, if we take time 0 to be a Sunday morning at the beginning of the month, by the following Saturday, the player who put $100 dollars in the bank will know have (1 + (0.05/ 100)) ^ (6/30) * 100 in their bank account (or an extra 1cent if you calculate).
+
+The risk-free return over that one week will therefore have been 1cent- it is the return the player receives without having to risk their money buying/selling turnips. For each day over the week, this risk-free return is easy to calculate. Because we are only interested in this compared to the returns on investing savings in turnips, the amount in the bank doesn’t actually matter- we only care on the interest gained as a proportion of savings.
+
+*the FT has an article on the recent Animal Crossing interest rate cut and why it forces players into riskier assets like turnips
+
+```{r}
+
+monthly_interest <- 1.005
+
+interest_df <- data.frame(day = factor(epochs, levels = epochs)) %>%
+  mutate(interest_days = rep(0:6, each = 2)) %>%
+  mutate(interest_gained = (1 * (monthly_interest ^ (1/30)) ^ interest_days) -1)
+
+interest_df
+
+```
+
+We can then work out the return on investment compared to risk. The simplest way to do this is to use the *Sharpe ratio* which can be formalized as:
+
+$S_a={E[R_a-R_b]}/{\sqrt{var[R_a-R_b]}}$
+
+Where we calculate the Sharpe ratio S of an asset a which is a function of the expected excess return (aka profit) R of that asset above the expected excess return of a ‘safe’ asset b (in this case the interest on money in the bank). 
+
+This is then divided by the variance of the expected gain above the risk free asset. We call the difference in return of the risky and safe asset Ra - Rb the ‘excess return’.
+
+It should also be clear that we want a Sharpe ratio of at least greater than 0 to make our investment worthwhile (as a risky asset is time discounted and the possibility of prospect-like losses); generally we want a Sharpe ratio of 1 to indicate a good investment.
+
+As we have the interest gained per day, we can calculate the excess return by joining our interest df and taking the return by day for each simulation as Ra, which we average to find the expected and variance.
+
+```{r}
+#join in interest data
+Sharpe_mean_returns <- prices %>%
+  left_join(interest_df, by = "day") %>%
+  #calculate excess return over safe asset
+  mutate(excess_return = (return - 1) - interest_gained) %>%
+  group_by(day) %>%
+  #calc nominator and denominator
+  summarise(mean_excess = mean(excess_return),
+            sd_excess = sd(excess_return)) %>%
+  mutate(sharpe_ratio = mean_excess / sd_excess)
+
+select(Sharpe_mean_returns, day, sharpe_ratio)
+```
+
+So, as expected, the only epochs which show a positive Sharpe ratio are in the middle of the week, where prices spike. If we plot this we get a clearer indication of this:
+
+```{r}
+p4 <- ggplot(Sharpe_mean_returns, aes(x = day, y = sharpe_ratio, group = 1)) +
+  geom_line(colour = "dodgerblue") +
+  geom_point(size = 2, colour = "dodgerblue") +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "orange") +
+  labs(
+    title = "Sharpe ratio for selling turnip investment on a given epoch",
+    subtitle = paste("based on", simulation_reps, "simulations"),
+    x = "day",
+    y = "Sharpe ratio"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+p4
+```
+
+Remember, we want a Sharpe ratio of around 1 to be confident our investment is a good idea, so for the casual investor, the stalk market doesn’t seem to give good value. If a player did want to dabble and could only dedicate so many hours per week to the game, the calculation suggests they should try to make time somewhere around Wednesday or Thursday to check in on the market to maximize their returns.
+
+# Globalizing the Stalk Market
+
+However, all is not lost for turnip investors! While each player lives and works on their own island, they are able to visit the islands of their friends and can buy and sell Turnips there following the same rules. However, prices (both buying on Sunday and selling for the rest of the week) are independent between player’s islands, so a smart investor can sample many markets and sell in the one which offers the greatest price.
+
+To simulate these open markets, we image a player has n friends who will let them visit, and calculate the potential profit made by an optimal investor (buying on the cheapest island, and selling on the most profitable). We simulate each epoch on each island the same 1000 times and take the max potential returns per epoch.
+
+```{r}
+#do the same for n islands
+simulate_open_economies <- function(islands, pattern_likelihood, epochs) {
+  patterns <- pattern_likelihood %>%
+    sample_n(islands, weight = prob, replace = TRUE) %>%
+    .$pattern
+  
+  #munge
+  all_prices <- map_df(patterns, simulate_week, epochs) %>%
+    #will always buy at lowest and sell at highest
+    mutate(buy_price = min(buy_price)) %>%
+    group_by(day) %>%
+    mutate(sell_price = max(price)) %>%
+    select(day, buy_price, sell_price) %>%
+    unique() %>%
+    mutate(islands)
+}
+
+#run on 1:n islands
+n_islands <- 10
+open_prices <- rep(1:n_islands, simulation_reps) %>%
+  map_df(simulate_open_economies, pattern_likelihood, epochs) %>%
+  group_by(islands) %>%
+  mutate(return = sell_price / buy_price,
+         day = factor(day, levels = epochs)) %>%
+  filter(!grepl("sun [A-Z]{2}", day)) %>%
+  group_by(islands, day) %>%
+  mutate(mean_return = mean(return)) %>%
+  ungroup()
+```
+
+If we then paste the density of returns by simulation, colored by the number of islands, we can see a clear rightward shift towards greater returns when a player has more friends. To think about this simply, if we imagine a player has infinite friends, they will always buy turnips for the minimum possible price ($90) and always sell them for the maximum possible price on that day.
+
+```{r warning=FALSE, message=FALSE}
+p5 <- ggplot(open_prices, aes(x = return, y = day, group = paste(day, islands),
+                              fill = islands, colour = islands)) +
+  geom_density_ridges2(alpha = 0.2) +
+  geom_vline(xintercept = 1, linetype = "dashed", colour = "dodgerblue", size = 1) +
+  scale_fill_gradient(low = "yellow", high = "green") +
+  scale_colour_gradient(low = "yellow", high = "green") +
+  scale_x_continuous(limits = c(0, 2.5)) +
+  labs(
+    title = "which days yield greatest profits in the stalk market?",
+    subtitle = "by day and number of islands sampled",
+    x = "return on investment",
+    y = "day"
+  ) +
+  theme_minimal()
+
+p5
+```
+
+What’s striking is that even with just 10 friends, player can be pretty much guaranteed to always make profit no matter which day they collude to all check their islands prices- the mean return on investment is clearly above 1.0 even by the following Saturday. The best potential returns are clearly still to be had midweek however, where now a player can clearly expect a doubling of their investment:
+
+```{r}
+open_prices %>%
+  group_by(islands, day) %>%
+  summarise(mean_return = mean(return)) %>%
+  arrange(-mean_return) %>%
+  head(n = 10)
+```
+
+If we use our Sharpe ratio calculation to then calculate when a player should collude with friends to all check their local turnip prices* we might expect therefore that it will also suggest checking somewhere in this midweek spike. However, if we plot it, we find an unexpected result:
+
+*if we assume that quarantined players probably can manage to check prices more than once/twice a week, managing to co-ordinate between multiple players is going to get very hard very quickly so this constraint really will become a factor
+
+```{r}
+#calculate Sharpe ratio per island as before
+Sharpe_mean_open_returns <- open_prices %>%
+  left_join(interest_df, by = "day") %>%
+  mutate(excess_return = (return - 1) - interest_gained) %>%
+  group_by(islands, day) %>%
+  summarise(mean_excess = mean(excess_return),
+            sd_excess = sd(excess_return)) %>%
+  mutate(sharpe_ratio = mean_excess / sd_excess)
+
+#plot the sharpe ratio coloured by islands
+p6 <- ggplot(Sharpe_mean_open_returns, 
+             aes(x = day, y = sharpe_ratio, group = islands, colour = islands)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "orange") +
+  labs(
+    title = "Sharpe ratio for selling turnip investment on a given epoch",
+    subtitle = "by day and number of islands sampled",
+    x = "day",
+    y = "Sharpe ratio"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p6
+```
+
+As we increase the number of islands, the Sharpe ratio tilts towards selling earlier (when the mean returns are lower). Why do we get this result? To investigate we need to look at some real stock charts, which we can easily do via the tidyquant package.
+
+```{r message=FALSE, warning=FALSE}
+library(tidyquant)
+
+#get nintendo stock data
+nintendo_symbol <- "7974.T"
+nintendo <- getSymbols(nintendo_symbol,
+                       from = '2019-06-01',
+                       to = "2020-03-15",
+                       auto.assign = FALSE) %>%
+  as.data.frame() %>%
+  rename_all(~gsub(paste0(nintendo_symbol, "."), "", .)) %>%
+  rownames_to_column("date") %>%
+  mutate(date = as.Date(date)) %>%
+  select(date, close = Close)
+
+#plot the last 9 months of nintendo stock
+p7 <- ggplot(nintendo, aes(x = date, y = close)) +
+  geom_line(size = 2, colour = "orange") +
+  labs(
+    title = "Nintendo stock prices",
+    subtitle = "data from June 2019-March 2020",
+    x = "date",
+    y = "closing stock price"
+  ) +
+  theme_minimal()
+
+p7
+```
+
+Even though the Nintendo stock price has been fairly volatile over the past 9 months, it’s held its value fairly steadily- it would be literally impossible for a trader to double their investment over this time (c.f. turnips in a week). We can drill down into the data by looking at the daily change in closing price (as a fraction of the price), using dplyr::lag()
+
+```{r message=FALSE, warning=FALSE}
+p8 <- nintendo %>%
+  mutate(daily_change = (close - lag(close)) / lag(close)) %>%
+  ggplot(aes(x = daily_change)) +
+  geom_histogram(fill = "orange", colour = "black") +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "dodgerblue") +
+  labs(
+    title = "daily changes in Nintendo stock prices",
+    subtitle = "data from June 2019-March 2020",
+    x = "fractional daily change in price",
+    y = "count"
+  ) +
+  theme_minimal()
+
+p8
+```
+
+
+There’s three things to note here: - the daily change in prices (roughly) follows a normal distribution* (with a mean slightly above 0 over a given time frame) - the daily change in price is fairly small, i.e. the price is fairly stable - there is a greater downside risk in large price moves- you’re more likely to see a big reduction in price than a big increase (see the recent downturn in Nintendo stock due to COVID-19 for example**)
+
+*stock returns don’t follow a normal distribution if you rigorously test it, but it’s close enough to be useful
+
+**yes, I know it has bounced back up, the data was selectively chosen to make a point
+
+These are important basic heuristics for portfolio building and we can see that our stalk market fails on all three. Luckily, the fact that our turnip returns are skewed (even if they are skewed upwards instead of downwards as in the real life data).
+
+Instead of using the Sharpe ratio, which considers the total standard deviation of the returns, we can use the Sortino ratio which is a risk-adjusted version to control for the downside risk of investment (i.e. you’re more likely to make big losses than big gains). We know that with multiple friends, we can be pretty confident of making big returns,
+
+$S_a={E(R_a-MAR)}/{\sqrt{{1/n}*\int_{-\infty}^{MAR}{(MAR-R_a)^2dR}}}$
+
+which ok, looks pretty rough, but is simple enough to calculate.
+
+The numerator is just the same as the Sharpe ratio numerator, except instead of the returns on asset a vs. a risk-free asset, we’re now calculating the returns vs. a Minimal Acceptable Return (MAR). Re-imagine our scenario where someone only has x hours spare to play Animal Crossing, they aren’t going to go through the stress and commitment to play the stalk market without making at least MAR returns (where MAR is some number).
+
+The denominator also looks more complicated than the Sharpe ratio, but remember, for that we want to find
+
+$demon_{Sharp}=\sqrt{var[R_a-R_b]}=sd[R_a-R_b]$
+
+
+which is what we’re calculating here, just we are limiting the standard deviation to the downside risk, which means we only take the standard deviation of returns which fall beneath the MAR (hence the max argument in the integration).
+
+For instance, let’s say we want an excess return of 1, i.e. we want to judge the profitability of checking certain epochs to at least double our initial investment on turnips:
+
+```{r}
+#want to double investment so MAR = 1
+MAR <- 1
+
+#calc Sortino ratio
+Sortino_ratio <- open_prices %>%
+  group_by(day, islands) %>%
+  mutate(excess_return = return - 1) %>%
+  summarise(
+    #numerator
+    mean_excess = mean(excess_return - MAR),
+    #denominator squared for readability
+    downside_sq = sum((MAR - excess_return[excess_return < MAR])^2/n())
+  ) %>%
+  #calc
+  mutate(sortino_ratio = mean_excess / sqrt(downside_sq))
+
+#plot the Sortino ratio by epoch
+p9 <- ggplot(Sortino_ratio, aes(x = day, y = sortino_ratio, group = islands, colour = islands)) +
+  geom_line() +
+  geom_point(size = 2) +
+  geom_hline(yintercept = 0, linetype = "dashed", colour = "orange") +
+  labs(
+    title = "Sortino ratio for selling turnip investment on a given epoch",
+    subtitle = "by day and number of islands sampled",
+    x = "day",
+    y = "Sortino ratio"
+  ) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p9
+```
+

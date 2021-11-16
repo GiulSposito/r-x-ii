@@ -1,0 +1,122 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(jsonlite)
+```
+
+
+# sleep score
+
+```{r}
+
+sleep <- read_csv("./data/raw/sleep-score/sleep_score.csv")
+
+sleep %>% 
+  glimpse()
+
+sleep %>% 
+  select(timestamp,contains("score")) %>%
+  pivot_longer(-timestamp, names_to = "data",values_to = "value") %>% 
+  ggplot(aes(timestamp, value)) +
+  geom_line(aes(color=data)) +
+  theme_minimal()
+
+```
+
+```{r, warning=FALSE}
+
+filenames <- dir("./data/raw/user-site-export/", full.names = T)
+
+files <- tibble( pathname = filenames ) %>% 
+  mutate(
+    filename = str_remove(pathname, ".*/"),
+    type = str_extract(filename, "\\w+"),
+    type = as.factor(type),
+    date = ymd(str_extract(filename,"\\d[\\d-]+"))
+  ) %>% 
+  select(filename, date, type, pathname)
+
+
+resting_hr <- files %>% 
+  filter(type=="resting_heart_rate") %>% 
+  mutate(
+    json.content = map(pathname, read_json)
+  )
+
+rest_hr <- resting_hr %>% 
+  unnest_longer(json.content) %>% 
+  hoist(
+    json.content,
+    dateTime = "dateTime",
+    date = c("value","date", mdy),
+    value = c("value", "value"),
+    error = c("value","error")
+  )
+
+rest_hr %>% 
+  select(date, value, error) %>% 
+  ggplot(aes(date,value)) +
+  geom_line()+
+  theme_minimal()
+```
+
+
+
+```{r}
+weightlogs <- files %>% 
+  filter(type=="weight") %>% 
+  mutate(json.content=map(pathname, read_json))
+
+wght <- weightlogs %>% 
+   unnest_longer(json.content) %>% 
+    hoist(
+      json.content,
+      log.id = "logId",
+      weight = "weight",
+      bmi    = "bmi",
+      date   = c("date",mdy),
+      time   = "time"
+    )
+
+wght %>% 
+  select(date, weight, bmi) %>% 
+  ggplot(aes(date, weight)) +
+  geom_line() +
+  theme_minimal()
+
+```
+
+
+
+```{r}
+
+sleep_logs <- files %>% 
+  filter(type=="sleep") %>% 
+  mutate(json.content = map(pathname, read_json))
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
